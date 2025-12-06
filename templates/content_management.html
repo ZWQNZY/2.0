@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>智能瞭望 - 深采内容管理</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="logo">智能瞭望系统</div>
+        <div class="nav-links">
+            <a href="{{ url_for('dashboard') }}">数据采集</a>
+            <a href="{{ url_for('data_management') }}">数据管理</a>
+            <a href="{{ url_for('content_management') }}" class="active">深采内容管理</a>
+            <a href="{{ url_for('rule_management') }}">规则库管理</a>
+            <a href="{{ url_for('ai_engine') }}">Ai模型引擎</a>
+            <a href="{{ url_for('ai_analysis') }}">AI分析与报告</a>
+            <a href="{{ url_for('logout') }}">退出</a>
+        </div>
+    </nav>
+
+    <div class="main-container">
+        <section class="filter-section">
+            <h2>深采内容管理</h2>
+            <form method="GET" action="{{ url_for('content_management') }}" class="filter-form">
+                <div class="form-group-inline">
+                    <label>关键词检索：</label>
+                    <input type="text" name="keyword" value="{{ request.args.get('keyword', '') }}" placeholder="搜索标题或内容...">
+                </div>
+                <button type="submit" class="btn-filter">筛选</button>
+                <a href="{{ url_for('content_management') }}" class="btn-reset">重置</a>
+            </form>
+        </section>
+
+        <section class="data-table-section">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th width="5%">ID</th>
+                        <th width="10%">采集日期</th>
+                        <th width="35%">清洗标题</th>
+                        <th width="15%">所属域名</th>
+                        <th width="15%">应用规则</th>
+                        <th width="20%" style="text-align: center;">操作</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in contents %}
+                    <tr id="row-{{ item.id }}">
+                        <td>{{ item.id }}</td>
+                        <td>{{ item.created_at.strftime('%Y-%m-%d') }}</td>
+                        <td title="{{ item.clean_title }}">{{ item.clean_title or '（未提取标题）' }}</td>
+                        <td>{{ item.crawler_result.domain }}</td>
+                        <td>{{ item.rule.rule_name if item.rule else '无规则' }}</td>
+                        <td class="col-actions">
+                            <button class="btn-small btn-view-origin" onclick="openViewModal({{ item.id }})">查看</button>
+                            <button class="btn-small btn-sniff" onclick="openEditModal({{ item.id }})">修改</button>
+                            <button class="btn-small btn-delete" onclick="deleteContent('{{ item.id }}')">删除</button>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="6" style="text-align:center;">暂无深采数据</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </section>
+    </div>
+
+    <!-- View Modal -->
+    <div id="viewModal" class="modal">
+        <div class="modal-content" style="width: 800px; max-height: 90vh; overflow-y: auto;">
+            <div class="modal-header">
+                <h3>内容详情</h3>
+                <span class="close" onclick="closeViewModal()">&times;</span>
+            </div>
+            <div class="modal-body" id="viewModalBody">
+                <div class="form-group">
+                    <label>标题:</label>
+                    <div id="view-title" style="padding: 10px; background: #333; border-radius: 4px;"></div>
+                </div>
+                <div class="form-group">
+                    <label>正文:</label>
+                    <div id="view-content" style="padding: 10px; background: #333; border-radius: 4px; white-space: pre-wrap; max-height: 500px; overflow-y: auto;"></div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-secondary" onclick="closeViewModal()">关闭</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Edit Modal -->
+    <div id="editModal" class="modal">
+        <div class="modal-content" style="width: 800px;">
+            <div class="modal-header">
+                <h3>修改内容</h3>
+                <span class="close" onclick="closeEditModal()">&times;</span>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="edit-id">
+                <div class="form-group">
+                    <label for="edit-title">标题</label>
+                    <input type="text" id="edit-title" class="form-control">
+                </div>
+                <div class="form-group">
+                    <label for="edit-content">正文内容</label>
+                    <textarea id="edit-content" class="form-control" style="height: 400px;"></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-secondary" onclick="closeEditModal()">取消</button>
+                <button class="btn-primary" onclick="saveContent()">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- View Modal ---
+        const viewModal = document.getElementById("viewModal");
+
+        function openViewModal(id) {
+            // Fetch detail
+            fetch('/content/get/' + id)
+                .then(res => res.json())
+                .then(data => {
+                    if(data.status === 'success') {
+                        document.getElementById('view-title').innerText = data.data.clean_title || '（空）';
+                        document.getElementById('view-content').innerText = data.data.clean_content || '（空）';
+                        viewModal.style.display = "block";
+                    } else {
+                        alert('获取失败: ' + data.message);
+                    }
+                })
+                .catch(err => alert('请求出错'));
+        }
+
+        function closeViewModal() {
+            viewModal.style.display = "none";
+        }
+
+        // --- Edit Modal ---
+        const editModal = document.getElementById("editModal");
+
+        function openEditModal(id) {
+            fetch('/content/get/' + id)
+                .then(res => res.json())
+                .then(data => {
+                    if(data.status === 'success') {
+                        document.getElementById('edit-id').value = id;
+                        document.getElementById('edit-title').value = data.data.clean_title || '';
+                        document.getElementById('edit-content').value = data.data.clean_content || '';
+                        editModal.style.display = "block";
+                    } else {
+                        alert('获取失败: ' + data.message);
+                    }
+                })
+                .catch(err => alert('请求出错'));
+        }
+
+        function closeEditModal() {
+            editModal.style.display = "none";
+        }
+
+        function saveContent() {
+            const id = document.getElementById('edit-id').value;
+            const title = document.getElementById('edit-title').value;
+            const content = document.getElementById('edit-content').value;
+
+            fetch('/content/edit/' + id, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ clean_title: title, clean_content: content })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if(data.status === 'success') {
+                    alert('保存成功');
+                    closeEditModal();
+                    location.reload();
+                } else {
+                    alert('保存失败: ' + data.message);
+                }
+            })
+            .catch(err => alert('请求出错'));
+        }
+
+        // --- Delete ---
+        function deleteContent(id) {
+            if (confirm('确定要删除这条深采数据吗？(原始采集记录不会被删除)')) {
+                fetch('/content/delete/' + id, {
+                    method: 'POST'
+                })
+                .then(res => res.json())
+                .then(data => {
+                    if(data.status === 'success') {
+                        document.getElementById('row-' + id).remove();
+                    } else {
+                        alert('删除失败: ' + data.message);
+                    }
+                })
+                .catch(err => alert('请求出错'));
+            }
+        }
+
+        window.onclick = function(event) {
+            if (event.target == viewModal) {
+                closeViewModal();
+            }
+            if (event.target == editModal) {
+                closeEditModal();
+            }
+        }
+    </script>
+</body>
+</html>

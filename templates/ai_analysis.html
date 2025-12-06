@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>智能瞭望 - AI数据分析</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <!-- ECharts -->
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+    <style>
+        .analysis-container {
+            display: flex;
+            gap: 20px;
+            height: calc(100vh - 100px);
+        }
+
+        .chat-panel {
+            flex: 2;
+            background: #1e2a3a;
+            border-radius: 12px;
+            display: flex;
+            flex-direction: column;
+            border: 1px solid var(--border-color);
+            overflow: hidden;
+        }
+
+        .workflow-panel {
+            flex: 1;
+            background: #111a26;
+            border-radius: 12px;
+            border: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .panel-header {
+            padding: 15px;
+            background: rgba(0,0,0,0.2);
+            border-bottom: 1px solid var(--border-color);
+            font-weight: bold;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .chat-history {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .message {
+            max-width: 85%;
+            padding: 12px 16px;
+            border-radius: 8px;
+            line-height: 1.6;
+            position: relative;
+        }
+
+        .message.user {
+            align-self: flex-end;
+            background: #0056b3;
+            color: white;
+            border-bottom-right-radius: 2px;
+        }
+
+        .message.assistant {
+            align-self: flex-start;
+            background: #2d3b4e;
+            color: #e0e0e0;
+            border-bottom-left-radius: 2px;
+            border: 1px solid #444;
+        }
+        
+        .message.system {
+             align-self: center;
+             background: transparent;
+             color: #888;
+             font-size: 0.8rem;
+             text-align: center;
+        }
+
+        .chat-input-area {
+            padding: 20px;
+            background: #151f2b;
+            border-top: 1px solid var(--border-color);
+            display: flex;
+            gap: 10px;
+        }
+
+        .chat-input {
+            flex: 1;
+            background: #2d3b4e;
+            border: 1px solid #444;
+            color: white;
+            padding: 12px;
+            border-radius: 6px;
+            resize: none;
+            height: 50px;
+            font-family: inherit;
+        }
+        
+        .chat-input:focus {
+            outline: none;
+            border-color: var(--primary-color);
+        }
+
+        .workflow-content {
+            flex: 1;
+            padding: 15px;
+            overflow-y: auto;
+        }
+
+        .step-item {
+            margin-bottom: 15px;
+            padding: 10px;
+            background: #1e2a3a;
+            border-radius: 6px;
+            border-left: 3px solid #555;
+            animation: fadeIn 0.3s ease;
+        }
+
+        .step-item.thinking { border-left-color: #f0ad4e; }
+        .step-item.querying { border-left-color: #00d2ff; }
+        .step-item.analyzing { border-left-color: #28a745; }
+        .step-item.error { border-left-color: #dc3545; }
+
+        .step-title {
+            font-size: 0.9rem;
+            font-weight: bold;
+            margin-bottom: 5px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .step-detail {
+            font-size: 0.8rem;
+            color: #aaa;
+            font-family: monospace;
+            white-space: pre-wrap;
+            background: rgba(0,0,0,0.2);
+            padding: 5px;
+            border-radius: 4px;
+            margin-top: 5px;
+            display: none; /* Hidden by default */
+        }
+        
+        .step-item:hover .step-detail {
+            display: block;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(5px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .pulse-dot {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            background-color: var(--primary-color);
+            border-radius: 50%;
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+            0% { transform: scale(1); opacity: 1; }
+            50% { transform: scale(1.5); opacity: 0.5; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+        
+        /* Markdown tables */
+        .message table {
+            border-collapse: collapse;
+            width: 100%;
+            margin: 10px 0;
+            font-size: 0.9rem;
+        }
+        .message th, .message td {
+            border: 1px solid #555;
+            padding: 6px 10px;
+            text-align: left;
+        }
+        .message th {
+            background: #333;
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar">
+        <div class="logo">智能瞭望系统</div>
+        <div class="nav-links">
+            <a href="{{ url_for('dashboard') }}">数据采集</a>
+            <a href="{{ url_for('data_management') }}">数据管理</a>
+            <a href="{{ url_for('content_management') }}">深采内容管理</a>
+            <a href="{{ url_for('rule_management') }}">规则库管理</a>
+            <a href="{{ url_for('ai_engine') }}">Ai模型引擎</a>
+            <a href="{{ url_for('ai_analysis') }}" class="active">AI分析与报告</a>
+            <a href="{{ url_for('logout') }}">退出</a>
+        </div>
+    </nav>
+
+    <div class="main-container">
+        <div class="analysis-container">
+            <!-- Left: Chat Interface -->
+            <div class="chat-panel">
+                <div class="panel-header">
+                    <span>💬 AI 数据分析助手</span>
+                    <select id="model-select" style="background: #333; color: white; border: 1px solid #555; padding: 5px; border-radius: 4px;">
+                        {% for model in models %}
+                        <option value="{{ model.id }}">{{ model.name }} ({{ model.model_name }})</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="chat-history" id="chat-history">
+                    <div class="message system">
+                        欢迎使用 AI 数据分析助手。我可以帮您查询数据库、统计数据并生成报告。<br>
+                        试着问我："统计一下各个域名的规则数量" 或 "查询最新的5条爬虫规则"。
+                    </div>
+                </div>
+                <div class="chat-input-area">
+                    <textarea class="chat-input" id="user-input" placeholder="输入您的分析需求... (Enter 发送, Shift+Enter 换行)"></textarea>
+                    <button class="btn-primary" onclick="sendMessage()" id="send-btn">发送</button>
+                </div>
+            </div>
+
+            <!-- Right: Workflow Visualization -->
+            <div class="workflow-panel">
+                <div class="panel-header">
+                    <span>⚙️ 工作流监控</span>
+                    <span class="pulse-dot" id="working-indicator" style="display: none;"></span>
+                </div>
+                <div class="workflow-content" id="workflow-steps">
+                    <!-- Steps will appear here -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script>
+        const chatHistory = document.getElementById('chat-history');
+        const workflowSteps = document.getElementById('workflow-steps');
+        const userInput = document.getElementById('user-input');
+        const sendBtn = document.getElementById('send-btn');
+        const workingIndicator = document.getElementById('working-indicator');
+        const modelSelect = document.getElementById('model-select');
+
+        // Auto-resize textarea
+        userInput.addEventListener('input', function() {
+            this.style.height = 'auto';
+            this.style.height = (this.scrollHeight) + 'px';
+            if(this.value === '') this.style.height = '50px';
+        });
+
+        userInput.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
+
+        function appendMessage(role, content) {
+            const div = document.createElement('div');
+            div.className = `message ${role}`;
+            if (role === 'assistant') {
+                div.innerHTML = marked.parse(content);
+            } else {
+                div.textContent = content;
+            }
+            chatHistory.appendChild(div);
+            chatHistory.scrollTop = chatHistory.scrollHeight;
+            return div;
+        }
+
+        function addWorkflowStep(type, title, detail) {
+            const div = document.createElement('div');
+            div.className = `step-item ${type}`;
+            div.innerHTML = `
+                <div class="step-title">
+                    <span>${getIconForType(type)}</span> ${title}
+                </div>
+                ${detail ? `<div class="step-detail">${detail}</div>` : ''}
+            `;
+            workflowSteps.appendChild(div);
+            workflowSteps.scrollTop = workflowSteps.scrollHeight;
+        }
+
+        function getIconForType(type) {
+            switch(type) {
+                case 'thinking': return '🤔';
+                case 'querying': return '🔍';
+                case 'analyzing': return '📊';
+                case 'error': return '❌';
+                default: return '📝';
+            }
+        }
+
+        async function sendMessage() {
+            const text = userInput.value.trim();
+            if (!text) return;
+
+            const modelId = modelSelect.value;
+            if (!modelId) {
+                alert('请先选择一个 AI 模型');
+                return;
+            }
+
+            userInput.value = '';
+            userInput.style.height = '50px';
+            appendMessage('user', text);
+            
+            // Disable input
+            userInput.disabled = true;
+            sendBtn.disabled = true;
+            workingIndicator.style.display = 'inline-block';
+            
+            // Clear previous workflow? Optional. Let's keep it for context or clear it per session.
+            // workflowSteps.innerHTML = ''; 
+
+            try {
+                const response = await fetch('/ai_analysis/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        model_id: modelId,
+                        message: text
+                    })
+                });
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+                let currentMessageDiv = null;
+                let currentContent = '';
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop(); // Keep the last partial line
+
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            try {
+                                const data = JSON.parse(line.slice(6));
+                                
+                                // Handle different event types
+                                if (data.type === 'token') {
+                                    if (!currentMessageDiv) {
+                                        currentMessageDiv = appendMessage('assistant', '');
+                                    }
+                                    currentContent += data.content;
+                                    currentMessageDiv.innerHTML = marked.parse(currentContent);
+                                    chatHistory.scrollTop = chatHistory.scrollHeight;
+                                } 
+                                else if (data.type === 'step') {
+                                    addWorkflowStep(data.status, data.title, data.detail);
+                                }
+                                else if (data.error) {
+                                    addWorkflowStep('error', 'Error', data.error);
+                                    appendMessage('assistant', `❌ Error: ${data.error}`);
+                                }
+                            } catch (e) {
+                                console.error('Parse error', e);
+                            }
+                        }
+                    }
+                }
+            } catch (e) {
+                console.error(e);
+                appendMessage('assistant', 'Error connecting to server.');
+            } finally {
+                userInput.disabled = false;
+                sendBtn.disabled = false;
+                workingIndicator.style.display = 'none';
+                userInput.focus();
+            }
+        }
+    </script>
+</body>
+</html>

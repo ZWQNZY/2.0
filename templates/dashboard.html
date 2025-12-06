@@ -13,7 +13,10 @@
         <div class="nav-links">
             <a href="{{ url_for('dashboard') }}" class="active">数据采集</a>
             <a href="{{ url_for('data_management') }}">数据管理</a>
+            <a href="{{ url_for('content_management') }}">深采内容管理</a>
             <a href="{{ url_for('rule_management') }}">规则库管理</a>
+            <a href="{{ url_for('ai_engine') }}">Ai模型引擎</a>
+            <a href="{{ url_for('ai_analysis') }}">AI分析与报告</a>
             <a href="{{ url_for('logout') }}">退出</a>
         </div>
     </nav>
@@ -23,6 +26,11 @@
             <h2>数据采集中心</h2>
             <form method="POST" action="{{ url_for('dashboard') }}" class="search-form">
                 <div class="search-group">
+                    <select name="source" class="source-select" style="padding: 10px; margin-right: 10px; border: 1px solid #ddd; border-radius: 4px;">
+                        <option value="baidu" {% if source == 'baidu' %}selected{% endif %}>百度搜索</option>
+                        <option value="sina" {% if source == 'sina' %}selected{% endif %}>新浪新闻</option>
+                        <option value="sogou" {% if source == 'sogou' %}selected{% endif %}>搜狗搜索</option>
+                    </select>
                     <input type="text" name="keyword" placeholder="请输入关键词或需求..." value="{{ keyword }}" required>
                     <div class="date-range-group">
                         <input type="date" name="start_date" value="{{ start_date }}" class="date-input" title="开始日期">

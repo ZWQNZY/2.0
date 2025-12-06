@@ -12,7 +12,10 @@
         <div class="nav-links">
             <a href="{{ url_for('dashboard') }}">数据采集</a>
             <a href="{{ url_for('data_management') }}" class="active">数据管理</a>
+            <a href="{{ url_for('content_management') }}">深采内容管理</a>
             <a href="{{ url_for('rule_management') }}">规则库管理</a>
+            <a href="{{ url_for('ai_engine') }}">Ai模型引擎</a>
+            <a href="{{ url_for('ai_analysis') }}">AI分析与报告</a>
             <a href="{{ url_for('logout') }}">退出</a>
         </div>
     </nav>
@@ -57,7 +60,7 @@
                             <a href="{{ item.url }}" target="_blank" class="result-title">{{ item.title }}</a>
                             <div class="result-domain">{{ item.domain }}</div>
                         </td>
-                        <td>百度全网搜索</td>
+                        <td>{{ domain_rule_map.get(item.domain) or '暂无规则' }}</td>
                         <td class="col-actions">
                             <button class="btn-small btn-collect" onclick="startCollect('{{ item.id }}')">采集</button>
                             <button class="btn-small btn-sniff" onclick="startSniff('{{ item.id }}')">嗅探</button>
@@ -129,6 +132,10 @@
                             <input type="text" id="rule_domain" readonly>
                         </div>
                         <div class="form-group">
+                            <label>目标URL:</label>
+                            <input type="text" id="rule_site_name" placeholder="例如: /article/123 或 https://example.com/p/...">
+                        </div>
+                        <div class="form-group">
                             <label>标题 XPath:</label>
                             <input type="text" id="rule_title_xpath">
                         </div>
@@ -173,25 +180,21 @@
             location.reload(); 
         }
 
-        async function batchCollect() {
-            const selected = Array.from(document.querySelectorAll('.data-checkbox:checked')).map(cb => cb.value);
-            if (selected.length === 0) {
-                alert('请先选择要采集的数据');
-                return;
-            }
+        async function runCollection(ids) {
+            if (ids.length === 0) return;
 
             progressModal.style.display = "block";
             document.getElementById('progress-bar').style.width = '0%';
-            document.getElementById('progress-text').innerText = `正在处理 0/${selected.length}`;
+            document.getElementById('progress-text').innerText = `正在处理 0/${ids.length}`;
             document.getElementById('collection-report').style.display = 'none';
             document.getElementById('btn-progress-close').disabled = true;
             
             let successCount = 0;
             let failCount = 0;
 
-            for (let i = 0; i < selected.length; i++) {
-                const id = selected[i];
-                document.getElementById('progress-text').innerText = `正在采集 (${i+1}/${selected.length})...`;
+            for (let i = 0; i < ids.length; i++) {
+                const id = ids[i];
+                document.getElementById('progress-text').innerText = `正在采集 (${i+1}/${ids.length})...`;
                 
                 const btn = document.querySelector(`#row-${id} .btn-collect`);
                 if(btn) {
@@ -228,16 +231,25 @@
                     }
                 }
 
-                const percent = ((i + 1) / selected.length) * 100;
+                const percent = ((i + 1) / ids.length) * 100;
                 document.getElementById('progress-bar').style.width = percent + '%';
             }
 
             document.getElementById('progress-text').innerText = "采集任务结束";
-            document.getElementById('report-total').innerText = selected.length;
+            document.getElementById('report-total').innerText = ids.length;
             document.getElementById('report-success').innerText = successCount;
             document.getElementById('report-fail').innerText = failCount;
             document.getElementById('collection-report').style.display = 'block';
             document.getElementById('btn-progress-close').disabled = false;
+        }
+
+        async function batchCollect() {
+            const selected = Array.from(document.querySelectorAll('.data-checkbox:checked')).map(cb => cb.value);
+            if (selected.length === 0) {
+                alert('请先选择要采集的数据');
+                return;
+            }
+            await runCollection(selected);
         }
 
         // Modal Logic
@@ -254,34 +266,7 @@
         }
 
         function startCollect(id) {
-            const btn = document.querySelector(`#row-${id} .btn-collect`);
-            const originalText = btn.innerText;
-            btn.innerText = "采集...";
-            btn.disabled = true;
-
-            fetch('/collect_result/' + id, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                }
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.status === 'success') {
-                    alert('采集成功！ ' + data.message);
-                    btn.innerText = "已采集";
-                } else {
-                    alert('采集失败: ' + data.message);
-                    btn.innerText = originalText;
-                    btn.disabled = false;
-                }
-            })
-            .catch(error => {
-                console.error('Error:', error);
-                alert('采集请求出错');
-                btn.innerText = originalText;
-                btn.disabled = false;
-            });
+            runCollection([id]);
         }
 
         function startSniff(id) {
@@ -306,6 +291,7 @@
                     if (data.rule) {
                         document.getElementById('rule_name').value = data.rule.rule_name || "";
                         document.getElementById('rule_domain').value = data.rule.domain || "";
+                        document.getElementById('rule_site_name').value = data.rule.url_pattern || "";
                         document.getElementById('rule_title_xpath').value = data.rule.title_xpath || "";
                         document.getElementById('rule_content_xpath').value = data.rule.content_xpath || "";
                         document.getElementById('rule_headers').value = data.rule.headers || "";
@@ -408,6 +394,7 @@
             const data = {
                 rule_name: document.getElementById('rule_name').value,
                 domain: document.getElementById('rule_domain').value,
+                site_name: document.getElementById('rule_site_name').value,
                 title_xpath: document.getElementById('rule_title_xpath').value,
                 content_xpath: document.getElementById('rule_content_xpath').value,
                 headers: processedHeaders

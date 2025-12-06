@@ -12,7 +12,10 @@
         <div class="nav-links">
             <a href="{{ url_for('dashboard') }}">数据采集</a>
             <a href="{{ url_for('data_management') }}">数据管理</a>
+            <a href="{{ url_for('content_management') }}">深采内容管理</a>
             <a href="{{ url_for('rule_management') }}" class="active">规则库管理</a>
+            <a href="{{ url_for('ai_engine') }}">Ai模型引擎</a>
+            <a href="{{ url_for('ai_analysis') }}">AI分析与报告</a>
             <a href="{{ url_for('logout') }}">退出</a>
         </div>
     </nav>
@@ -32,7 +35,7 @@
                         <th width="5%">ID</th>
                         <th width="15%">规则名称</th>
                         <th width="15%">域名 (Domain)</th>
-                        <th width="15%">站点名称</th>
+                        <th width="15%">目标URL</th>
                         <th width="15%">创建时间</th>
                         <th width="20%" style="text-align: center;">操作</th>
                     </tr>
@@ -46,8 +49,8 @@
                         <td>{{ rule.site_name or '-' }}</td>
                         <td>{{ rule.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
                         <td class="col-actions">
-                            <button class="btn-small btn-sniff" onclick='openEditModal({{ rule|tojson }})'>编辑</button>
-                            <button class="btn-small btn-collect" onclick='copyRule({{ rule|tojson }})'>复制</button>
+                            <button class="btn-small btn-sniff" onclick='openEditModal({{ rule.to_dict()|tojson }})'>编辑</button>
+                            <button class="btn-small btn-collect" onclick='copyRule({{ rule.to_dict()|tojson }})'>复制</button>
                             <button class="btn-small btn-delete" onclick="deleteRule('{{ rule.id }}')">删除</button>
                         </td>
                     </tr>
@@ -80,8 +83,8 @@
                         <input type="text" id="rule_domain" placeholder="example.com">
                     </div>
                     <div class="form-group">
-                        <label>站点名称:</label>
-                        <input type="text" id="rule_site_name" placeholder="某某网站">
+                        <label>目标URL:</label>
+                        <input type="text" id="rule_site_name" placeholder="例如: /article/123 或 https://example.com/p/...">
                     </div>
                     <div class="form-group">
                         <label>标题 XPath:</label>

@@ -45,6 +45,7 @@ class CrawlerRule(db.Model):
     rule_name = db.Column(db.String(100), nullable=True) # Added rule_name
     domain = db.Column(db.String(200), unique=True, nullable=False)
     site_name = db.Column(db.String(200), nullable=True)
+    url_pattern = db.Column(db.String(500), nullable=True) # Added url_pattern
     title_xpath = db.Column(db.Text, nullable=True)
     content_xpath = db.Column(db.Text, nullable=True)
     headers = db.Column(db.Text, nullable=True) # JSON string
@@ -52,6 +53,19 @@ class CrawlerRule(db.Model):
 
     def __repr__(self):
         return f'<CrawlerRule {self.domain}>'
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'rule_name': self.rule_name,
+            'domain': self.domain,
+            'site_name': self.site_name,
+            'url_pattern': self.url_pattern,
+            'title_xpath': self.title_xpath,
+            'content_xpath': self.content_xpath,
+            'headers': self.headers,
+            'created_at': self.created_at.strftime('%Y-%m-%d %H:%M:%S') if self.created_at else None
+        }
 
 class CrawlerDetail(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -64,6 +78,37 @@ class CrawlerDetail(db.Model):
     
     crawler_result = db.relationship('CrawlerResult', backref=db.backref('details', lazy=True))
     rule = db.relationship('CrawlerRule', backref=db.backref('details', lazy=True))
+
+class AIModel(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False) # Display Name
+    provider = db.Column(db.String(100), nullable=True) # e.g., SiliconFlow, OpenAI
+    api_base = db.Column(db.String(500), nullable=False)
+    api_key = db.Column(db.String(500), nullable=False)
+    model_name = db.Column(db.String(200), nullable=False) # Actual model ID string
+    description = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'name': self.name,
+            'provider': self.provider,
+            'api_base': self.api_base,
+            'api_key': self.api_key, # Should be masked in frontend usually, but for edit we might need it
+            'model_name': self.model_name,
+            'description': self.description,
+            'created_at': self.created_at.strftime('%Y-%m-%d %H:%M') if self.created_at else ''
+        }
+
+class TokenUsageLog(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    model_id = db.Column(db.Integer, db.ForeignKey('ai_model.id'), nullable=False)
+    tokens_used = db.Column(db.Integer, default=0)
+    request_type = db.Column(db.String(50), default='chat')
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    model = db.relationship('AIModel', backref=db.backref('usage_logs', lazy=True))
 
 def init_db():
     with app.app_context():
