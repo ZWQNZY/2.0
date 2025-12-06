@@ -21,8 +21,15 @@
         <section class="search-section">
             <h2>数据采集中心</h2>
             <form method="POST" action="{{ url_for('dashboard') }}" class="search-form">
-                <input type="text" name="keyword" placeholder="请输入关键词或需求..." value="{{ keyword }}" required>
-                <button type="submit" class="btn-search">开始采集</button>
+                <div class="search-group">
+                    <input type="text" name="keyword" placeholder="请输入关键词或需求..." value="{{ keyword }}" required>
+                    <div class="date-range-group">
+                        <input type="date" name="start_date" value="{{ start_date }}" class="date-input" title="开始日期">
+                        <span class="date-separator">至</span>
+                        <input type="date" name="end_date" value="{{ end_date }}" class="date-input" title="结束日期">
+                    </div>
+                    <button type="submit" class="btn-search">开始采集</button>
+                </div>
             </form>
         </section>
 

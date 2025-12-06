@@ -1,7 +1,11 @@
 from flask import render_template, request, redirect, url_for, session, flash, jsonify
-from models import app, db, User, CrawlerResult
+from models import app, db, User, CrawlerResult, CrawlerRule
 from baidu_crawler import search_baidu
 from datetime import datetime
+import requests
+from bs4 import BeautifulSoup, NavigableString, Tag
+import json
+from urllib.parse import urlparse
 
 # --- Routes ---
 
@@ -36,17 +40,22 @@ def dashboard():
     
     results = []
     keyword = ""
+    start_date = ""
+    end_date = ""
     
     if request.method == 'POST':
-        keyword = request.form['keyword']
+        keyword = request.form.get('keyword', '')
+        start_date = request.form.get('start_date', '')
+        end_date = request.form.get('end_date', '')
+        
         if keyword:
-            results = search_baidu(keyword)
+            results = search_baidu(keyword, start_date, end_date)
             # Temporarily store results in session or just render them
             # For simplicity, we'll render them directly. 
             # To support saving, we need to send them back or keep track.
             # We will pass them to the template, and the save action will accept the data to save.
             
-    return render_template('dashboard.html', results=results, keyword=keyword)
+    return render_template('dashboard.html', results=results, keyword=keyword, start_date=start_date, end_date=end_date)
 
 @app.route('/save_results', methods=['POST'])
 def save_results():
@@ -75,6 +84,18 @@ def save_results():
     db.session.commit()
     return jsonify({'status': 'success', 'count': count})
 
+@app.route('/delete_result/<int:id>', methods=['POST'])
+def delete_result(id):
+    if 'user_id' not in session:
+        return jsonify({'status': 'error', 'message': 'Unauthorized'}), 401
+    
+    result = CrawlerResult.query.get(id)
+    if result:
+        db.session.delete(result)
+        db.session.commit()
+        return jsonify({'status': 'success'})
+    return jsonify({'status': 'error', 'message': 'Not found'}), 404
+
 @app.route('/data_management')
 def data_management():
     if 'user_id' not in session:
@@ -100,6 +121,274 @@ def data_management():
     
     # Group by date for display if needed, or just list them
     return render_template('data_management.html', saved_data=saved_data)
+
+@app.route('/collect_result/<int:id>', methods=['POST'])
+def collect_result(id):
+    if 'user_id' not in session:
+        return jsonify({'status': 'error', 'message': 'Unauthorized'}), 401
+    
+    result = CrawlerResult.query.get(id)
+    if not result:
+        return jsonify({'status': 'error', 'message': 'Not found'}), 404
+
+    try:
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+        response = requests.get(result.url, headers=headers, timeout=15)
+        response.encoding = response.apparent_encoding
+        result.content = response.text
+        db.session.commit()
+        return jsonify({'status': 'success', 'message': 'Content collected successfully'})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+import re
+
+def get_xpath(element):
+    """
+    Generate a robust XPath for a BeautifulSoup element.
+    """
+    if element is None:
+        return ""
+    components = []
+    child = element if element.name else element.parent
+    for parent in child.parents:
+        siblings = parent.find_all(child.name, recursive=False)
+        c_tag = child.name
+        if len(siblings) > 1:
+            try:
+                index = siblings.index(child) + 1
+                c_tag = f"{c_tag}[{index}]"
+            except ValueError:
+                pass # Should not happen if tree is consistent
+        components.append(c_tag)
+        child = parent
+    components.reverse()
+    return "/" + "/".join(components)
+
+def get_text_density(element):
+    """Calculate text density: text_length / tags_count"""
+    text_len = len(element.get_text(strip=True))
+    tags_count = len(element.find_all())
+    if tags_count == 0:
+        return text_len
+    return text_len / tags_count
+
+def get_link_density(element):
+    """Calculate link density: link_text_length / total_text_length"""
+    links = element.find_all('a')
+    if not links:
+        return 0
+    link_len = sum([len(a.get_text(strip=True)) for a in links])
+    total_len = len(element.get_text(strip=True))
+    if total_len == 0:
+        return 1
+    return link_len / total_len
+
+def score_node(element):
+    """Heuristic scoring for content candidates"""
+    score = 0
+    
+    # 1. Class/ID weight
+    weight = 0
+    attributes = ""
+    if element.get('class'):
+        attributes += " ".join(element.get('class')).lower()
+    if element.get('id'):
+        attributes += " " + str(element.get('id')).lower()
+        
+    if attributes:
+        if re.search(r'article|body|content|entry|hentry|main|page|pagination|post|text|blog|story|detail', attributes):
+            weight += 30
+        if re.search(r'combx|comment|community|disqus|extra|foot|header|menu|remark|rss|shoutbox|sidebar|sponsor|ad|meta|nav|copyright|recommend', attributes):
+            weight -= 25
+    
+    score += weight
+    
+    # 2. Paragraphs and Text
+    paragraphs = element.find_all('p', recursive=False)
+    for p in paragraphs:
+        text = p.get_text(strip=True)
+        if len(text) > 50:
+            score += 10
+        # Punctuation boost
+        score += (text.count(',') + text.count('，')) * 0.5
+        score += (text.count('.') + text.count('。')) * 0.5
+    
+    # Direct text content (for div-soup sites)
+    direct_text = "".join([t for t in element.contents if isinstance(t, NavigableString)]).strip()
+    if len(direct_text) > 100:
+        score += 10
+        score += (direct_text.count(',') + direct_text.count('，')) * 0.5
+
+    return score
+
+@app.route('/sniff_result/<int:id>', methods=['POST'])
+def sniff_result(id):
+    if 'user_id' not in session:
+        return jsonify({'status': 'error', 'message': 'Unauthorized'}), 401
+    
+    result = CrawlerResult.query.get(id)
+    if not result:
+        return jsonify({'status': 'error', 'message': 'Not found'}), 404
+
+    try:
+        # 1. Fetch Content
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+        
+        html_content = ""
+        if result.content:
+            html_content = result.content
+        else:
+            response = requests.get(result.url, headers=headers, timeout=15)
+            response.encoding = response.apparent_encoding
+            html_content = response.text
+            
+        soup = BeautifulSoup(html_content, 'html.parser')
+        
+        # 2. Media Sniffing (Legacy)
+        resources = []
+        videos = soup.find_all('video')
+        for video in videos:
+            src = video.get('src')
+            if src: resources.append({'type': 'video', 'url': src})
+        
+        # 3. Advanced Rule Sniffing
+        
+        # --- A. Title Detection ---
+        title_xpath = ""
+        
+        # Step 1: Check Open Graph Title
+        og_title = soup.find('meta', property='og:title')
+        target_title_text = ""
+        if og_title and og_title.get('content'):
+            target_title_text = og_title.get('content').strip()
+        
+        if not target_title_text:
+            # Step 2: Check <title> tag
+            page_title = soup.find('title')
+            if page_title and page_title.get_text():
+                target_title_text = page_title.get_text().strip()
+                # Remove likely site name suffix (e.g., "My Article - SiteName")
+                if '-' in target_title_text:
+                    target_title_text = target_title_text.split('-')[0].strip()
+                elif '|' in target_title_text:
+                    target_title_text = target_title_text.split('|')[0].strip()
+                elif '_' in target_title_text:
+                    target_title_text = target_title_text.split('_')[0].strip()
+        
+        # Step 3: Find DOM element matching this text
+        best_title_el = None
+        
+        if target_title_text:
+            # Look for h1-h3 that contains this text
+            headings = soup.find_all(['h1', 'h2', 'h3'])
+            for h in headings:
+                h_text = h.get_text(strip=True)
+                # Check similarity or inclusion
+                if target_title_text in h_text or h_text in target_title_text:
+                    # Prefer exact match or high overlap
+                    best_title_el = h
+                    if h.name == 'h1': # h1 is golden standard
+                        break
+        
+        # Fallback: Just take the first h1
+        if not best_title_el:
+            best_title_el = soup.find('h1')
+            
+        if best_title_el:
+            title_xpath = get_xpath(best_title_el)
+        
+        # --- B. Content Detection (Score Propagation) ---
+        content_xpath = ""
+        
+        # Candidates: Containers that might hold content
+        candidates = soup.find_all(['div', 'article', 'section', 'main', 'td'])
+        
+        scored_candidates = []
+        
+        for node in candidates:
+            # Pre-filter: Skip elements with negative class names
+            # (Already handled in score_node, but we can skip calculation for hidden ones)
+            if node.has_attr('style') and 'display:none' in node['style'].replace(" ", "").lower():
+                continue
+                
+            score = score_node(node)
+            
+            # Penalize link density (navigation menus often have high text score but high link density)
+            link_d = get_link_density(node)
+            if link_d > 0.5: # More than 50% text is links
+                score *= 0.2 # Heavy penalty
+            elif link_d > 0.2:
+                score *= 0.6
+            
+            scored_candidates.append((score, node))
+        
+        # Sort by score descending
+        scored_candidates.sort(key=lambda x: x[0], reverse=True)
+        
+        if scored_candidates:
+            best_content_el = scored_candidates[0][1]
+            # Sanity check: is there a parent with slightly higher score?
+            # Sometimes the inner div has score X, parent has X (same text), but parent covers more?
+            # Actually, we want the tightest wrapper. The score function favors text nodes.
+            # If parent has same text as child, score is same.
+            # Let's stick to the highest score.
+            content_xpath = get_xpath(best_content_el)
+            
+        # 4. Prepare Rule Suggestion (Do NOT save automatically)
+        domain = urlparse(result.url).netloc
+        
+        # Check if a rule already exists to pre-fill info
+        existing_rule = CrawlerRule.query.filter_by(domain=domain).first()
+        rule_name = existing_rule.rule_name if existing_rule else f"{domain} 默认规则"
+        
+        return jsonify({
+            'status': 'success', 
+            'message': '深度嗅探完成，请确认规则',
+            'rule': {
+                'domain': domain,
+                'rule_name': rule_name,
+                'title_xpath': title_xpath,
+                'content_xpath': content_xpath,
+                'headers': json.dumps(headers)
+            },
+            'resources': resources
+        })
+        
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+@app.route('/save_rule', methods=['POST'])
+def save_rule():
+    if 'user_id' not in session:
+        return jsonify({'status': 'error', 'message': 'Unauthorized'}), 401
+        
+    data = request.json
+    domain = data.get('domain')
+    
+    if not domain:
+         return jsonify({'status': 'error', 'message': 'Domain is required'}), 400
+         
+    try:
+        rule = CrawlerRule.query.filter_by(domain=domain).first()
+        if not rule:
+            rule = CrawlerRule(domain=domain)
+            db.session.add(rule)
+            
+        rule.rule_name = data.get('rule_name')
+        rule.title_xpath = data.get('title_xpath')
+        rule.content_xpath = data.get('content_xpath')
+        rule.headers = data.get('headers')
+        rule.site_name = domain # simple default
+        
+        db.session.commit()
+        return jsonify({'status': 'success', 'message': '规则保存成功'})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @app.route('/preview_pdf', methods=['POST'])
 def preview_pdf():

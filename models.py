@@ -1,6 +1,7 @@
 from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime
+from urllib.parse import urlparse
 
 import os
 
@@ -26,10 +27,31 @@ class CrawlerResult(db.Model):
     summary = db.Column(db.Text, nullable=True)
     url = db.Column(db.Text, nullable=False)
     cover_url = db.Column(db.Text, nullable=True)
+    content = db.Column(db.Text, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    @property
+    def domain(self):
+        try:
+            return urlparse(self.url).netloc
+        except:
+            return ""
 
     def __repr__(self):
         return f'<CrawlerResult {self.title}>'
+
+class CrawlerRule(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    rule_name = db.Column(db.String(100), nullable=True) # Added rule_name
+    domain = db.Column(db.String(200), unique=True, nullable=False)
+    site_name = db.Column(db.String(200), nullable=True)
+    title_xpath = db.Column(db.Text, nullable=True)
+    content_xpath = db.Column(db.Text, nullable=True)
+    headers = db.Column(db.Text, nullable=True) # JSON string
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def __repr__(self):
+        return f'<CrawlerRule {self.domain}>'
 
 def init_db():
     with app.app_context():
