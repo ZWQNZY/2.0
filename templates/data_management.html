@@ -12,6 +12,7 @@
         <div class="nav-links">
             <a href="{{ url_for('dashboard') }}">数据采集</a>
             <a href="{{ url_for('data_management') }}" class="active">数据管理</a>
+            <a href="{{ url_for('rule_management') }}">规则库管理</a>
             <a href="{{ url_for('logout') }}">退出</a>
         </div>
     </nav>
@@ -30,6 +31,7 @@
                 </div>
                 <button type="submit" class="btn-filter">筛选</button>
                 <a href="{{ url_for('data_management') }}" class="btn-reset">重置</a>
+                <button type="button" class="btn-filter" style="margin-left: 10px; background-color: #28a745;" onclick="batchCollect()">批量深度采集</button>
             </form>
         </section>
 
@@ -78,6 +80,33 @@
             <button class="btn-ai" disabled>生成 AI 分析报告</button>
             <button class="btn-pdf" disabled>导出 PDF</button>
         </section>
+    </div>
+
+    <!-- Progress Modal -->
+    <div id="progressModal" class="modal">
+        <div class="modal-content" style="width: 400px;">
+            <div class="modal-header">
+                <h3>采集进度</h3>
+                <span class="close" onclick="closeProgressModal()">&times;</span>
+            </div>
+            <div class="modal-body">
+                <div id="progress-container">
+                    <p id="progress-text">准备开始...</p>
+                    <div style="width: 100%; background-color: #ddd; height: 20px; border-radius: 4px; margin: 10px 0;">
+                        <div id="progress-bar" style="width: 0%; height: 100%; background-color: #4CAF50; border-radius: 4px; transition: width 0.3s;"></div>
+                    </div>
+                </div>
+                <div id="collection-report" style="display:none; margin-top: 15px; border-top: 1px solid #eee; padding-top: 10px;">
+                    <h4>采集简报</h4>
+                    <p>总计任务: <span id="report-total">0</span></p>
+                    <p style="color: green;">成功: <span id="report-success">0</span></p>
+                    <p style="color: red;">失败: <span id="report-fail">0</span></p>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-primary" onclick="closeProgressModal()" id="btn-progress-close" disabled>完成</button>
+            </div>
+        </div>
     </div>
 
     <!-- Sniff Result Modal -->
@@ -129,6 +158,88 @@
     </div>
 
     <script>
+        // Select All Logic
+        const selectAllCheckbox = document.getElementById('select-all-data');
+        if(selectAllCheckbox){
+            selectAllCheckbox.addEventListener('change', function() {
+                const checkboxes = document.querySelectorAll('.data-checkbox');
+                checkboxes.forEach(cb => cb.checked = this.checked);
+            });
+        }
+
+        const progressModal = document.getElementById("progressModal");
+        function closeProgressModal() {
+            progressModal.style.display = "none";
+            location.reload(); 
+        }
+
+        async function batchCollect() {
+            const selected = Array.from(document.querySelectorAll('.data-checkbox:checked')).map(cb => cb.value);
+            if (selected.length === 0) {
+                alert('请先选择要采集的数据');
+                return;
+            }
+
+            progressModal.style.display = "block";
+            document.getElementById('progress-bar').style.width = '0%';
+            document.getElementById('progress-text').innerText = `正在处理 0/${selected.length}`;
+            document.getElementById('collection-report').style.display = 'none';
+            document.getElementById('btn-progress-close').disabled = true;
+            
+            let successCount = 0;
+            let failCount = 0;
+
+            for (let i = 0; i < selected.length; i++) {
+                const id = selected[i];
+                document.getElementById('progress-text').innerText = `正在采集 (${i+1}/${selected.length})...`;
+                
+                const btn = document.querySelector(`#row-${id} .btn-collect`);
+                if(btn) {
+                     btn.innerText = "采集中...";
+                     btn.disabled = true;
+                }
+
+                try {
+                    const res = await fetch('/collect_result/' + id, {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'}
+                    });
+                    const data = await res.json();
+                    
+                    if (data.status === 'success') {
+                        successCount++;
+                        if(btn) {
+                            btn.innerText = "已采集";
+                            btn.title = data.message;
+                        }
+                    } else {
+                        failCount++;
+                        if(btn) {
+                            btn.innerText = "重试";
+                            btn.disabled = false;
+                        }
+                    }
+                } catch (e) {
+                    failCount++;
+                    console.error(e);
+                    if(btn) {
+                        btn.innerText = "重试";
+                        btn.disabled = false;
+                    }
+                }
+
+                const percent = ((i + 1) / selected.length) * 100;
+                document.getElementById('progress-bar').style.width = percent + '%';
+            }
+
+            document.getElementById('progress-text').innerText = "采集任务结束";
+            document.getElementById('report-total').innerText = selected.length;
+            document.getElementById('report-success').innerText = successCount;
+            document.getElementById('report-fail').innerText = failCount;
+            document.getElementById('collection-report').style.display = 'block';
+            document.getElementById('btn-progress-close').disabled = false;
+        }
+
         // Modal Logic
         const modal = document.getElementById("sniffModal");
         
@@ -157,7 +268,7 @@
             .then(response => response.json())
             .then(data => {
                 if (data.status === 'success') {
-                    alert('采集成功！');
+                    alert('采集成功！ ' + data.message);
                     btn.innerText = "已采集";
                 } else {
                     alert('采集失败: ' + data.message);
@@ -225,13 +336,81 @@
             });
         }
 
+        function parseHeadersInput(input) {
+            input = input.trim();
+            if (!input) return "";
+            
+            // 1. Try Parse JSON
+            try {
+                const j = JSON.parse(input);
+                if (typeof j === 'object' && j !== null) {
+                    return JSON.stringify(j, null, 2);
+                }
+            } catch(e) {}
+            
+            // 2. Parse Raw Lines
+            const lines = input.split('\n').map(l => l.trim()).filter(l => l);
+            if (lines.length === 0) return "";
+            
+            const headers = {};
+            
+            // Check for Key: Value format
+            // Heuristic: If significant number of lines look like "Key: Value", use that.
+            let colonCount = 0;
+            lines.forEach(l => {
+                // Key usually starts with alpha, can contain hyphens. 
+                // We check if the line *starts* with a key-like string followed by colon.
+                if (l.match(/^[a-zA-Z0-9-_]+\s*:/)) colonCount++;
+            });
+            
+            // If at least 30% of lines look like Key:Value, or if total lines is small and we found matches.
+            // But if user pasted alternating lines, colonCount will be low (e.g. only in values).
+            
+            if (colonCount >= Math.max(1, lines.length / 2)) {
+                // Assume Key: Value
+                lines.forEach(l => {
+                    const idx = l.indexOf(':');
+                    if (idx > -1) {
+                        const k = l.substring(0, idx).trim();
+                        const v = l.substring(idx+1).trim();
+                        if(k) headers[k] = v;
+                    }
+                });
+            } else {
+                // Assume Alternating Key\nValue
+                // e.g. 
+                // Accept
+                // text/html
+                for (let i = 0; i < lines.length - 1; i += 2) {
+                    const k = lines[i];
+                    const v = lines[i+1];
+                    // Basic sanity check: Key shouldn't be super long (arbitrary 100 chars)
+                    if (k.length < 100) {
+                         headers[k] = v;
+                    }
+                }
+            }
+            
+            if (Object.keys(headers).length > 0) {
+                return JSON.stringify(headers, null, 2);
+            }
+            
+            return input; // Fallback
+        }
+
         function saveRule() {
+            const rawHeaders = document.getElementById('rule_headers').value;
+            const processedHeaders = parseHeadersInput(rawHeaders);
+            
+            // Update UI to show converted JSON
+            document.getElementById('rule_headers').value = processedHeaders;
+
             const data = {
                 rule_name: document.getElementById('rule_name').value,
                 domain: document.getElementById('rule_domain').value,
                 title_xpath: document.getElementById('rule_title_xpath').value,
                 content_xpath: document.getElementById('rule_content_xpath').value,
-                headers: document.getElementById('rule_headers').value
+                headers: processedHeaders
             };
             
             fetch('/save_rule', {

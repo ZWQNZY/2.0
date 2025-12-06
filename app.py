@@ -1,11 +1,12 @@
 from flask import render_template, request, redirect, url_for, session, flash, jsonify
-from models import app, db, User, CrawlerResult, CrawlerRule
+from models import app, db, User, CrawlerResult, CrawlerRule, CrawlerDetail
 from baidu_crawler import search_baidu
 from datetime import datetime
 import requests
 from bs4 import BeautifulSoup, NavigableString, Tag
 import json
 from urllib.parse import urlparse
+from lxml import html as lxml_html
 
 # --- Routes ---
 
@@ -132,14 +133,90 @@ def collect_result(id):
         return jsonify({'status': 'error', 'message': 'Not found'}), 404
 
     try:
+        # 1. Check for Rule
+        domain = urlparse(result.url).netloc
+        rule = CrawlerRule.query.filter_by(domain=domain).first()
+        
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         }
-        response = requests.get(result.url, headers=headers, timeout=15)
-        response.encoding = response.apparent_encoding
-        result.content = response.text
+        
+        if rule and rule.headers:
+            try:
+                custom_headers = json.loads(rule.headers)
+                headers.update(custom_headers)
+            except:
+                pass
+        
+        # 2. Fetch Content
+        try:
+            response = requests.get(result.url, headers=headers, timeout=15)
+            response.encoding = response.apparent_encoding
+            html_content = response.text
+        except Exception as e:
+            return jsonify({'status': 'error', 'message': f'Request failed: {str(e)}'}), 500
+        
+        # 3. Parse Content
+        clean_title = ""
+        clean_content = ""
+        parsed_by_rule = False
+        
+        if rule and (rule.title_xpath or rule.content_xpath):
+            try:
+                tree = lxml_html.fromstring(html_content)
+                
+                if rule.title_xpath:
+                    titles = tree.xpath(rule.title_xpath)
+                    if titles:
+                        if hasattr(titles[0], 'text_content'):
+                            clean_title = titles[0].text_content().strip()
+                        elif isinstance(titles[0], str):
+                            clean_title = titles[0].strip()
+                
+                if rule.content_xpath:
+                    contents = tree.xpath(rule.content_xpath)
+                    if contents:
+                        if hasattr(contents[0], 'text_content'):
+                            clean_content = contents[0].text_content().strip()
+                        elif isinstance(contents[0], str):
+                            clean_content = contents[0].strip()
+                parsed_by_rule = True
+            except Exception as e:
+                print(f"XPath parsing error: {e}")
+        
+        # Fallback if no title found
+        if not clean_title:
+             try:
+                 soup = BeautifulSoup(html_content, 'html.parser')
+                 if soup.title:
+                     clean_title = soup.title.get_text().strip()
+             except:
+                 pass
+
+        # 4. Save to CrawlerDetail
+        detail = CrawlerDetail.query.filter_by(crawler_result_id=id).first()
+        if not detail:
+            detail = CrawlerDetail(crawler_result_id=id)
+            db.session.add(detail)
+        
+        detail.rule_id = rule.id if rule else None
+        detail.clean_title = clean_title
+        detail.clean_content = clean_content
+        detail.raw_html = html_content
+        detail.created_at = datetime.utcnow()
+        
+        # Update legacy content field
+        result.content = html_content
+        
         db.session.commit()
-        return jsonify({'status': 'success', 'message': 'Content collected successfully'})
+        
+        msg = '采集完成'
+        if parsed_by_rule:
+            msg += ' (已应用规则)'
+        else:
+            msg += ' (无规则，仅保存源码)'
+
+        return jsonify({'status': 'success', 'message': msg})
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
@@ -389,6 +466,85 @@ def save_rule():
         return jsonify({'status': 'success', 'message': '规则保存成功'})
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
+
+@app.route('/rules')
+def rule_management():
+    if 'user_id' not in session:
+        return redirect(url_for('login'))
+    
+    rules = CrawlerRule.query.order_by(CrawlerRule.created_at.desc()).all()
+    return render_template('rule_management.html', rules=rules)
+
+@app.route('/rules/add', methods=['POST'])
+def add_rule():
+    if 'user_id' not in session:
+        return jsonify({'status': 'error', 'message': 'Unauthorized'}), 401
+        
+    data = request.json
+    domain = data.get('domain')
+    
+    if not domain:
+        return jsonify({'status': 'error', 'message': 'Domain is required'}), 400
+        
+    if CrawlerRule.query.filter_by(domain=domain).first():
+        return jsonify({'status': 'error', 'message': '该域名的规则已存在，请使用编辑功能'}), 400
+        
+    try:
+        rule = CrawlerRule(
+            rule_name=data.get('rule_name'),
+            domain=domain,
+            site_name=data.get('site_name'),
+            title_xpath=data.get('title_xpath'),
+            content_xpath=data.get('content_xpath'),
+            headers=data.get('headers')
+        )
+        db.session.add(rule)
+        db.session.commit()
+        return jsonify({'status': 'success', 'message': '规则添加成功'})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+@app.route('/rules/edit/<int:id>', methods=['POST'])
+def edit_rule(id):
+    if 'user_id' not in session:
+        return jsonify({'status': 'error', 'message': 'Unauthorized'}), 401
+        
+    rule = CrawlerRule.query.get(id)
+    if not rule:
+        return jsonify({'status': 'error', 'message': 'Rule not found'}), 404
+        
+    data = request.json
+    try:
+        rule.rule_name = data.get('rule_name')
+        # rule.domain = data.get('domain') # Domain usually shouldn't be changed or needs unique check
+        # Let's allow domain change but check uniqueness if it changed
+        new_domain = data.get('domain')
+        if new_domain and new_domain != rule.domain:
+             if CrawlerRule.query.filter_by(domain=new_domain).first():
+                 return jsonify({'status': 'error', 'message': '新域名已存在其他规则'}), 400
+             rule.domain = new_domain
+
+        rule.site_name = data.get('site_name')
+        rule.title_xpath = data.get('title_xpath')
+        rule.content_xpath = data.get('content_xpath')
+        rule.headers = data.get('headers')
+        
+        db.session.commit()
+        return jsonify({'status': 'success', 'message': '规则更新成功'})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+@app.route('/rules/delete/<int:id>', methods=['POST'])
+def delete_rule(id):
+    if 'user_id' not in session:
+        return jsonify({'status': 'error', 'message': 'Unauthorized'}), 401
+        
+    rule = CrawlerRule.query.get(id)
+    if rule:
+        db.session.delete(rule)
+        db.session.commit()
+        return jsonify({'status': 'success', 'message': '规则删除成功'})
+    return jsonify({'status': 'error', 'message': 'Rule not found'}), 404
 
 @app.route('/preview_pdf', methods=['POST'])
 def preview_pdf():

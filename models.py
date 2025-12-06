@@ -53,6 +53,18 @@ class CrawlerRule(db.Model):
     def __repr__(self):
         return f'<CrawlerRule {self.domain}>'
 
+class CrawlerDetail(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    crawler_result_id = db.Column(db.Integer, db.ForeignKey('crawler_result.id'), nullable=False)
+    rule_id = db.Column(db.Integer, db.ForeignKey('crawler_rule.id'), nullable=True)
+    clean_title = db.Column(db.String(500), nullable=True)
+    clean_content = db.Column(db.Text, nullable=True)
+    raw_html = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    crawler_result = db.relationship('CrawlerResult', backref=db.backref('details', lazy=True))
+    rule = db.relationship('CrawlerRule', backref=db.backref('details', lazy=True))
+
 def init_db():
     with app.app_context():
         db.create_all()

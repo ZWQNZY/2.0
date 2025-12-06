@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>智能瞭望 - 规则库管理</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="logo">智能瞭望系统</div>
+        <div class="nav-links">
+            <a href="{{ url_for('dashboard') }}">数据采集</a>
+            <a href="{{ url_for('data_management') }}">数据管理</a>
+            <a href="{{ url_for('rule_management') }}" class="active">规则库管理</a>
+            <a href="{{ url_for('logout') }}">退出</a>
+        </div>
+    </nav>
+
+    <div class="main-container">
+        <section class="filter-section">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <h2>爬虫规则库管理</h2>
+                <button class="btn-filter" onclick="openAddModal()">+ 新增规则</button>
+            </div>
+        </section>
+
+        <section class="data-table-section">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th width="5%">ID</th>
+                        <th width="15%">规则名称</th>
+                        <th width="15%">域名 (Domain)</th>
+                        <th width="15%">站点名称</th>
+                        <th width="15%">创建时间</th>
+                        <th width="20%" style="text-align: center;">操作</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for rule in rules %}
+                    <tr id="rule-{{ rule.id }}">
+                        <td>{{ rule.id }}</td>
+                        <td>{{ rule.rule_name or '-' }}</td>
+                        <td>{{ rule.domain }}</td>
+                        <td>{{ rule.site_name or '-' }}</td>
+                        <td>{{ rule.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+                        <td class="col-actions">
+                            <button class="btn-small btn-sniff" onclick='openEditModal({{ rule|tojson }})'>编辑</button>
+                            <button class="btn-small btn-collect" onclick='copyRule({{ rule|tojson }})'>复制</button>
+                            <button class="btn-small btn-delete" onclick="deleteRule('{{ rule.id }}')">删除</button>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="6" style="text-align:center;">暂无规则数据</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </section>
+    </div>
+
+    <!-- Rule Modal -->
+    <div id="ruleModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="modalTitle">配置规则</h3>
+                <span class="close" onclick="closeModal()">&times;</span>
+            </div>
+            <div class="modal-body">
+                <form id="ruleForm">
+                    <input type="hidden" id="rule_id">
+                    <div class="form-group">
+                        <label>规则名称:</label>
+                        <input type="text" id="rule_name" placeholder="为该规则命名">
+                    </div>
+                    <div class="form-group">
+                        <label>域名 (Domain): <span style="color:red">*</span></label>
+                        <input type="text" id="rule_domain" placeholder="example.com">
+                    </div>
+                    <div class="form-group">
+                        <label>站点名称:</label>
+                        <input type="text" id="rule_site_name" placeholder="某某网站">
+                    </div>
+                    <div class="form-group">
+                        <label>标题 XPath:</label>
+                        <input type="text" id="rule_title_xpath">
+                    </div>
+                    <div class="form-group">
+                        <label>内容 XPath:</label>
+                        <input type="text" id="rule_content_xpath">
+                    </div>
+                    <div class="form-group">
+                        <label>请求头 (Headers JSON):</label>
+                        <textarea id="rule_headers" rows="5" placeholder='{"User-Agent": "..."}'></textarea>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-secondary" onclick="closeModal()">取消</button>
+                <button class="btn-primary" onclick="submitRule()">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const modal = document.getElementById("ruleModal");
+        
+        // Header Parsing Logic (Reused)
+        function parseHeadersInput(input) {
+            input = input.trim();
+            if (!input) return "";
+            try {
+                const j = JSON.parse(input);
+                if (typeof j === 'object' && j !== null) return JSON.stringify(j, null, 2);
+            } catch(e) {}
+            
+            const lines = input.split('\n').map(l => l.trim()).filter(l => l);
+            if (lines.length === 0) return "";
+            
+            const headers = {};
+            let colonCount = 0;
+            lines.forEach(l => { if (l.match(/^[a-zA-Z0-9-_]+\s*:/)) colonCount++; });
+            
+            if (colonCount >= Math.max(1, lines.length / 2)) {
+                lines.forEach(l => {
+                    const idx = l.indexOf(':');
+                    if (idx > -1) {
+                        const k = l.substring(0, idx).trim();
+                        const v = l.substring(idx+1).trim();
+                        if(k) headers[k] = v;
+                    }
+                });
+            } else {
+                for (let i = 0; i < lines.length - 1; i += 2) {
+                    const k = lines[i];
+                    const v = lines[i+1];
+                    if (k.length < 100) headers[k] = v;
+                }
+            }
+            
+            if (Object.keys(headers).length > 0) return JSON.stringify(headers, null, 2);
+            return input;
+        }
+
+        function openAddModal() {
+            document.getElementById('modalTitle').innerText = "新增规则";
+            document.getElementById('rule_id').value = "";
+            document.getElementById('ruleForm').reset();
+            document.getElementById('rule_domain').readOnly = false;
+            modal.style.display = "block";
+        }
+
+        function openEditModal(rule) {
+            document.getElementById('modalTitle').innerText = "编辑规则";
+            document.getElementById('rule_id').value = rule.id;
+            document.getElementById('rule_name').value = rule.rule_name || "";
+            document.getElementById('rule_domain').value = rule.domain || "";
+            // document.getElementById('rule_domain').readOnly = true; // Allow editing but validate backend
+            document.getElementById('rule_site_name').value = rule.site_name || "";
+            document.getElementById('rule_title_xpath').value = rule.title_xpath || "";
+            document.getElementById('rule_content_xpath').value = rule.content_xpath || "";
+            document.getElementById('rule_headers').value = rule.headers || "";
+            modal.style.display = "block";
+        }
+
+        function copyRule(rule) {
+            document.getElementById('modalTitle').innerText = "复制规则 (请修改域名)";
+            document.getElementById('rule_id').value = ""; // Clear ID to create new
+            document.getElementById('rule_name').value = (rule.rule_name || "") + " (副本)";
+            document.getElementById('rule_domain').value = ""; // Clear domain to force user input
+            document.getElementById('rule_domain').placeholder = "请输入新域名 (原域名: " + rule.domain + ")";
+            document.getElementById('rule_site_name').value = rule.site_name || "";
+            document.getElementById('rule_title_xpath').value = rule.title_xpath || "";
+            document.getElementById('rule_content_xpath').value = rule.content_xpath || "";
+            document.getElementById('rule_headers').value = rule.headers || "";
+            modal.style.display = "block";
+        }
+
+        function closeModal() {
+            modal.style.display = "none";
+        }
+
+        window.onclick = function(event) {
+            if (event.target == modal) {
+                closeModal();
+            }
+        }
+
+        function submitRule() {
+            const id = document.getElementById('rule_id').value;
+            const rawHeaders = document.getElementById('rule_headers').value;
+            const processedHeaders = parseHeadersInput(rawHeaders);
+            document.getElementById('rule_headers').value = processedHeaders;
+
+            const data = {
+                rule_name: document.getElementById('rule_name').value,
+                domain: document.getElementById('rule_domain').value,
+                site_name: document.getElementById('rule_site_name').value,
+                title_xpath: document.getElementById('rule_title_xpath').value,
+                content_xpath: document.getElementById('rule_content_xpath').value,
+                headers: processedHeaders
+            };
+
+            const url = id ? '/rules/edit/' + id : '/rules/add';
+
+            fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            })
+            .then(res => res.json())
+            .then(res => {
+                if (res.status === 'success') {
+                    alert(res.message);
+                    location.reload();
+                } else {
+                    alert('操作失败: ' + res.message);
+                }
+            })
+            .catch(err => {
+                console.error(err);
+                alert('请求出错');
+            });
+        }
+
+        function deleteRule(id) {
+            if (confirm('确定要删除这条规则吗？')) {
+                fetch('/rules/delete/' + id, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                })
+                .then(res => res.json())
+                .then(res => {
+                    if (res.status === 'success') {
+                        document.getElementById('rule-' + id).remove();
+                    } else {
+                        alert('删除失败: ' + res.message);
+                    }
+                })
+                .catch(err => {
+                    console.error(err);
+                    alert('请求出错');
+                });
+            }
+        }
+    </script>
+</body>
+</html>
