@@ -4,13 +4,14 @@ from bs4 import BeautifulSoup
 def parse_baidu_results(html_content):
     """
     Parses Baidu search results using BeautifulSoup.
+    Returns a list of dictionaries.
     """
     soup = BeautifulSoup(html_content, 'html.parser')
     
     # Baidu search results are usually wrapped in div with class 'c-container'
     results = soup.find_all('div', class_='c-container')
     
-    print(f"\n找到 {len(results)} 条结果：\n")
+    parsed_data = []
     
     for result in results:
         data = {
@@ -29,7 +30,6 @@ def parse_baidu_results(html_content):
                 data["url"] = a_tag.get('href')
         
         # 2. Extract Cover URL
-        # Look for an image inside the result container
         img = result.find('img')
         if img and img.get('src'):
             data["cover_url"] = img.get('src')
@@ -37,40 +37,27 @@ def parse_baidu_results(html_content):
             data["cover_url"] = "无封面"
 
         # 3. Extract Summary
-        # Try different selectors for summary
         summary_div = result.find('div', class_='c-abstract')
         if not summary_div:
-            # New Baidu structure often uses dynamic classes or 'content-right'
-            # Heuristic: Find text in the container that is NOT the title and NOT meta info
-            # We can try to get the text of the main content wrapper if possible
-            # Or just look for specific classes if known.
-            # Fallback: Get all text and strip title.
-            
-            # Simple fallback strategy:
-            # If there is a class starting with 'content-right', use it.
             summary_div = result.find('div', class_=lambda x: x and 'content-right' in x)
         
         if summary_div:
             data["summary"] = summary_div.get_text(strip=True)
         else:
-            # Deep fallback: Get raw text of the whole result, subtract title
             full_text = result.get_text(strip=True)
             if data["title"] != "N/A":
-                # Remove title from full text
-                data["summary"] = full_text.replace(data["title"], "").strip()[:100] + "..." # Limit length
+                data["summary"] = full_text.replace(data["title"], "").strip()[:100] + "..." 
             else:
                 data["summary"] = full_text[:100] + "..."
+        
+        parsed_data.append(data)
 
-        # Output format
-        print(f"标题：{data['title']}")
-        print(f"概要：{data['summary']}")
-        print(f"URL：{data['url']}")
-        print(f"封面URL：{data['cover_url']}")
-        print("-" * 50)
+    return parsed_data
 
 def search_baidu(keyword):
     """
     Searches Baidu for the given keyword using specific headers.
+    Returns a list of results or None.
     """
     url = "https://www.baidu.com/s"
     
@@ -100,27 +87,25 @@ def search_baidu(keyword):
 
     try:
         response = requests.get(url, params=params, headers=headers)
-        print(f"Request URL: {response.url}")
-        print(f"Status Code: {response.status_code}")
+        # print(f"Request URL: {response.url}")
+        # print(f"Status Code: {response.status_code}")
         
         if response.status_code == 200:
-            # Encoding handling to ensure Chinese characters display correctly
             response.encoding = 'utf-8' 
-            
-            # Parse the results
-            parse_baidu_results(response.text)
-            
-            return response.text
+            return parse_baidu_results(response.text)
         else:
             print("Failed to retrieve data.")
-            return None
+            return []
             
     except Exception as e:
         print(f"An error occurred: {e}")
-        return None
+        return []
 
 if __name__ == "__main__":
     keyword = input("请输入搜索关键词 (默认为'成都'): ")
     if not keyword:
         keyword = "成都"
-    search_baidu(keyword)
+    results = search_baidu(keyword)
+    for item in results:
+        print(item)
+

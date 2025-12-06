@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>智能瞭望 - 数据分析控制台</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+</head>
+<body>
+    <nav class="navbar">
+        <div class="logo">智能瞭望系统</div>
+        <div class="nav-links">
+            <a href="{{ url_for('dashboard') }}" class="active">数据采集</a>
+            <a href="{{ url_for('data_management') }}">数据管理</a>
+            <a href="{{ url_for('logout') }}">退出</a>
+        </div>
+    </nav>
+
+    <div class="main-container">
+        <section class="search-section">
+            <h2>数据采集中心</h2>
+            <form method="POST" action="{{ url_for('dashboard') }}" class="search-form">
+                <input type="text" name="keyword" placeholder="请输入关键词或需求..." value="{{ keyword }}" required>
+                <button type="submit" class="btn-search">开始采集</button>
+            </form>
+        </section>
+
+        {% if results %}
+        <section class="results-section">
+            <div class="results-header">
+                <h3>采集结果 ({{ results|length }})</h3>
+                <button id="save-selected-btn" class="btn-save">批量保存至数据库</button>
+            </div>
+            
+            <div class="results-list">
+                <div class="result-header-row">
+                    <div class="col-check"><input type="checkbox" id="select-all"></div>
+                    <div class="col-title">标题</div>
+                    <div class="col-summary">概要</div>
+                    <div class="col-cover">封面</div>
+                    <div class="col-action">操作</div>
+                </div>
+                
+                {% for item in results %}
+                <div class="result-item" data-url="{{ item.url }}">
+                    <div class="col-check">
+                        <input type="checkbox" class="item-checkbox">
+                    </div>
+                    <div class="col-title">
+                        <a href="{{ item.url }}" target="_blank">{{ item.title }}</a>
+                    </div>
+                    <div class="col-summary" title="{{ item.summary }}">
+                        {{ item.summary }}
+                    </div>
+                    <div class="col-cover">
+                        {% if item.cover_url != '无封面' %}
+                        <img src="{{ item.cover_url }}" alt="Cover" class="cover-img">
+                        {% else %}
+                        <span class="no-cover">无封面</span>
+                        {% endif %}
+                    </div>
+                    <div class="col-action">
+                        <a href="{{ item.url }}" target="_blank" class="btn-view">预览</a>
+                    </div>
+                    
+                    <!-- Hidden data for JS -->
+                    <textarea class="hidden-data" style="display:none;">{{ item|tojson }}</textarea>
+                </div>
+                {% endfor %}
+            </div>
+        </section>
+        {% endif %}
+    </div>
+
+    <script>
+        $(document).ready(function() {
+            // Select All
+            $('#select-all').change(function() {
+                $('.item-checkbox').prop('checked', $(this).prop('checked'));
+            });
+
+            // Save Selected
+            $('#save-selected-btn').click(function() {
+                var selectedItems = [];
+                $('.item-checkbox:checked').each(function() {
+                    var itemJson = $(this).closest('.result-item').find('.hidden-data').val();
+                    selectedItems.push(JSON.parse(itemJson));
+                });
+
+                if (selectedItems.length === 0) {
+                    alert('请至少选择一项数据');
+                    return;
+                }
+
+                $.ajax({
+                    url: '{{ url_for("save_results") }}',
+                    type: 'POST',
+                    contentType: 'application/json',
+                    data: JSON.stringify({
+                        keyword: '{{ keyword }}',
+                        items: selectedItems
+                    }),
+                    success: function(response) {
+                        if (response.status === 'success') {
+                            alert('成功保存 ' + response.count + ' 条数据！');
+                        } else {
+                            alert('保存失败: ' + response.message);
+                        }
+                    },
+                    error: function() {
+                        alert('服务器通信错误');
+                    }
+                });
+            });
+        });
+    </script>
+</body>
+</html>
